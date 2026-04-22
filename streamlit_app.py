@@ -57,12 +57,32 @@ def _save_users(users: dict):
 
 
 def authenticate(username: str, password: str):
-    """Return user dict if credentials valid, else None."""
-    store.invalidate_cache()
-    users = _load_users()
-    user = users.get(username.lower())
-    if user and user["password_hash"] == hash_pw(password):
-        return {"username": user["username"], "role": user["role"]}
+    """Return user dict if credentials valid, else None.
+    Falls back to local hardcoded admin if Gist connection fails."""
+    pw_hash = hash_pw(password)
+
+    # Try cloud authentication first
+    try:
+        store.invalidate_cache()
+        users = _load_users()
+        if users and isinstance(users, dict) and len(users) > 0:
+            user = users.get(username.lower())
+            if user and user["password_hash"] == pw_hash:
+                return {"username": user["username"], "role": user["role"]}
+            # Cloud users loaded successfully but credentials don't match
+            return None
+    except Exception as e:
+        st.warning(f"⚠️ No se pudo conectar con la nube: {e}")
+
+    # Fallback: local hardcoded admin (in case Gist is unreachable)
+    LOCAL_ADMIN = {
+        "username": "rmigliore",
+        "password_hash": hash_pw("admin2024"),
+        "role": "admin",
+    }
+    if username.lower() == LOCAL_ADMIN["username"] and pw_hash == LOCAL_ADMIN["password_hash"]:
+        return {"username": LOCAL_ADMIN["username"], "role": LOCAL_ADMIN["role"]}
+
     return None
 
 
@@ -121,6 +141,18 @@ def show_login_page():
                         st.rerun()
                     else:
                         st.error("❌ Credenciales incorrectas.")
+                        # Diagnostic: show connection status
+                        try:
+                            store.invalidate_cache()
+                            test_users = store.load_users()
+                            if not test_users or len(test_users) == 0:
+                                st.warning("⚠️ No se pudo leer la base de usuarios desde la nube. "
+                                          "Verificá que los secrets (GITHUB_TOKEN, GIST_ID) estén "
+                                          "correctamente configurados en Streamlit Cloud.")
+                            else:
+                                st.info(f"ℹ️ Conexión a nube OK. Usuarios encontrados: {list(test_users.keys())}")
+                        except Exception as diag_e:
+                            st.error(f"🔴 Error de conexión: {diag_e}")
 
 
 # ─── Admin Sidebar ────────────────────────────────────────────────────────────
