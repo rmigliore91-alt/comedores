@@ -139,14 +139,6 @@ def show_login_page():
                         st.rerun()
                     else:
                         st.error("❌ Credenciales incorrectas.")
-                        # Debug info (remove after confirming login works)
-                        with st.expander("🔧 Debug"):
-                            st.text(f"Token present: {bool(store.token)}")
-                            st.text(f"Gist ID present: {bool(store.gist_id)}")
-                            users_raw = store.load_users()
-                            st.text(f"Users loaded: {list(users_raw.keys()) if users_raw else 'EMPTY'}")
-                            st.text(f"Tried: '{username.strip().lower()}'")
-                            st.text(f"Hash: {hash_pw(password)[:16]}...")
 
 
 # ─── Admin Sidebar ────────────────────────────────────────────────────────────
