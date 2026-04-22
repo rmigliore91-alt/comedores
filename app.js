@@ -2953,7 +2953,123 @@ function buildPreparationText(dishName, ingredients, categories, dietId) {
 }
 
 /**
+ * Call Gemini API with Google Search grounding to get a real recipe from the internet.
+ * Returns the generated text or null if it fails.
+ */
+async function callGeminiForRecipe(dishName, ingredients, dietId) {
+    const apiKey = window._GEMINI_API_KEY;
+    if (!apiKey) return null;
+
+    // Build ingredient list for context
+    const ingredientList = ingredients.length > 0
+        ? ingredients.map(i => `- ${i.name}${i.amount ? ` (${i.amount}${i.unit})` : ''}`).join('\n')
+        : '(sin ingredientes especificados — buscar ingredientes típicos de este plato)';
+
+    // Get diet info
+    let dietInfo = 'General (Basal) — sin restricciones especiales, pero adaptado para adultos mayores';
+    if (dietId) {
+        const dietObj = state.diets.find(d => d.id === dietId);
+        const dietAdapt = AI_RECIPE_ENGINE.dietAdaptations[dietId];
+        if (dietObj) {
+            dietInfo = `Dieta: ${dietObj.name}`;
+            if (dietAdapt) {
+                dietInfo += '\nRestricciones específicas:\n' + dietAdapt.rules.map(r => `• ${r}`).join('\n');
+            }
+        }
+    }
+
+    const prompt = `Eres un chef especializado en cocina para residencias geriátricas en Paraguay.
+
+TAREA: Busca en internet recetas REALES y ESPECÍFICAS del plato "${dishName}" y genera un modo de preparación completo adaptado para una residencia geriátrica paraguaya.
+
+INGREDIENTES DEL PLATO:
+${ingredientList}
+
+TIPO DE DIETA:
+${dietInfo}
+
+INSTRUCCIONES OBLIGATORIAS:
+1. BUSCA recetas reales de "${dishName}" en internet — NO inventes una receta genérica
+2. ADAPTA la receta encontrada específicamente para adultos mayores (cortes pequeños, texturas blandas, temperaturas seguras)
+3. Si el plato tiene variante paraguaya o sudamericana, PRIORIZA esa versión
+4. Incluye tiempos y temperaturas ESPECÍFICOS para este plato en particular
+5. Si la dieta tiene restricciones, adapta los ingredientes y técnicas según las restricciones indicadas
+
+FORMATO DE RESPUESTA (usar exactamente esta estructura):
+
+📋 MÉTODO DE PREPARACIÓN — ${dishName.toUpperCase()}
+${'═'.repeat(40)}
+
+${dietId ? '⚠️ ADAPTACIÓN DIETARIA:\n(incluir las adaptaciones específicas para la dieta indicada, aplicadas a ESTE plato en particular)\n' : ''}
+📌 SOBRE ESTE PLATO:
+(1-2 líneas describiendo el plato, su origen y por qué es adecuado/cómo adaptarlo para adultos mayores)
+
+🔪 PREPARACIÓN PREVIA:
+(pasos numerados de preparación de ingredientes, ESPECÍFICOS para este plato)
+
+🍳 COCCIÓN:
+(pasos numerados de cocción con tiempos y temperaturas ESPECÍFICOS para este plato)
+
+🇵🇾 TOQUE PARAGUAYO:
+(sugerencias ESPECÍFICAS para darle identidad paraguaya a ESTE plato — no genéricas, sino aplicadas al plato)
+
+⚕️ CONSIDERACIONES GERIÁTRICAS:
+(notas de seguridad y presentación ESPECÍFICAS para este plato — por ejemplo, si tiene huesos, cómo servirlo, textura ideal)
+
+⏰ TIEMPOS:
+(tiempo total de preparación y cocción para este plato)
+
+REGLAS:
+- Sé ESPECÍFICO para "${dishName}", no uses texto genérico que sirva para cualquier plato
+- Los tiempos de cocción deben ser para ESTE plato específico
+- Las consideraciones geriátricas deben ser para ESTE plato específico
+- No inventes — basa tu respuesta en recetas reales encontradas en internet
+- Escribe en español
+- No uses markdown con ** ni ## — solo texto plano con emojis como encabezados`;
+
+    try {
+        const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    tools: [{ google_search: {} }],
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 2048
+                    }
+                })
+            }
+        );
+
+        if (!resp.ok) {
+            console.error('Gemini API error:', resp.status, await resp.text());
+            return null;
+        }
+
+        const data = await resp.json();
+        const candidate = data.candidates?.[0];
+        if (!candidate || !candidate.content?.parts) return null;
+
+        // Extract text from parts (skip function calls etc)
+        const text = candidate.content.parts
+            .filter(p => p.text)
+            .map(p => p.text)
+            .join('\n');
+
+        return text || null;
+    } catch (e) {
+        console.error('Gemini API call failed:', e);
+        return null;
+    }
+}
+
+/**
  * Main entry: Generate AI preparation and animate into textarea.
+ * Uses Gemini API with Google Search grounding for real recipes.
+ * Falls back to template-based generation if API unavailable.
  */
 window.generateAIPreparation = async () => {
     const dishName = document.getElementById('dish-name').value.trim();
@@ -2986,14 +3102,28 @@ window.generateAIPreparation = async () => {
     const { ingredients, categories } = analyzeCurrentIngredients();
     const dietId = activeDishTab === 'default' ? null : activeDishTab;
 
-    await new Promise(resolve => setTimeout(resolve, 800));
+    // Try Gemini API with Google Search first
+    let fullText = null;
+    if (window._GEMINI_API_KEY) {
+        textarea.value = '🔍 Buscando recetas reales de "' + dishName + '" en internet...';
+        fullText = await callGeminiForRecipe(dishName, ingredients, dietId);
+    }
 
-    const fullText = buildPreparationText(dishName, ingredients, categories, dietId);
+    // Fallback to template-based generation
+    if (!fullText) {
+        if (window._GEMINI_API_KEY) {
+            textarea.value = '⚠️ No se pudo conectar con la IA. Generando con plantilla local...';
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        fullText = buildPreparationText(dishName, ingredients, categories, dietId);
+    }
+
+    textarea.value = '';
 
     // Typewriter animation
     let charIndex = 0;
-    const charsPerFrame = 3;
-    const frameDelay = 12;
+    const charsPerFrame = 4;
+    const frameDelay = 10;
 
     await new Promise(resolve => {
         const typeInterval = setInterval(() => {
@@ -3017,7 +3147,25 @@ window.generateAIPreparation = async () => {
     textarea.classList.remove('ai-typing');
     infoEl.style.display = 'block';
 
-    textarea.rows = Math.max(6, Math.min(20, fullText.split('\n').length + 2));
+    // Update info banner based on source
+    const infoBanner = document.getElementById('ai-gen-info');
+    if (window._GEMINI_API_KEY && fullText !== buildPreparationText(dishName, ingredients, categories, dietId)) {
+        infoBanner.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                <ion-icon name="globe-outline" style="font-size:1rem;"></ion-icon>
+                <strong>Receta generada por IA con búsqueda web</strong>
+            </div>
+            <span>Basada en recetas reales de "${dishName}" encontradas en internet, adaptada para residencia geriátrica paraguaya. Puedes editarla libremente.</span>`;
+    } else {
+        infoBanner.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                <ion-icon name="information-circle-outline" style="font-size:1rem;"></ion-icon>
+                <strong>Preparación generada por plantilla local</strong>
+            </div>
+            <span>Generada con plantillas. Para recetas específicas buscadas en internet, configura la API Key de Gemini.</span>`;
+    }
+
+    textarea.rows = Math.max(6, Math.min(25, fullText.split('\n').length + 2));
 
     // Completion flash
     textarea.style.borderColor = '#10b981';

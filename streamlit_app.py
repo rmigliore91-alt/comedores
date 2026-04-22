@@ -229,6 +229,7 @@ def show_app():
     window._USERNAME = '{user["username"]}';
     window._GITHUB_TOKEN = '{store.token}';
     window._GIST_ID = '{store.gist_id}';
+    window._GEMINI_API_KEY = '{st.secrets.get("GEMINI_API_KEY", "")}';
     </script>"""
 
     # Replace the app.js reference with injection + inlined JS
