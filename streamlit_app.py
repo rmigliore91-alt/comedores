@@ -70,6 +70,7 @@ def _save_users(users: dict):
 
 def authenticate(username: str, password: str):
     """Return user dict if credentials valid, else None."""
+    store.invalidate_cache()  # ensure we read fresh data from Gist
     users = _load_users()
     user = users.get(username.lower())
     if user and user["password_hash"] == hash_pw(password):

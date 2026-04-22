@@ -14,8 +14,14 @@ class DataStore:
     """Read/write JSON data to a GitHub Gist for persistence."""
 
     def __init__(self):
-        self.token = st.secrets.get("GITHUB_TOKEN", "")
-        self.gist_id = st.secrets.get("GIST_ID", "")
+        try:
+            self.token = st.secrets["GITHUB_TOKEN"]
+        except (KeyError, FileNotFoundError):
+            self.token = ""
+        try:
+            self.gist_id = st.secrets["GIST_ID"]
+        except (KeyError, FileNotFoundError):
+            self.gist_id = ""
         self._headers = {
             "Authorization": f"token {self.token}",
             "Accept": "application/vnd.github.v3+json",
