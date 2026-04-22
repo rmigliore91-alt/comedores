@@ -17,8 +17,8 @@ const _isAdmin = _CLOUD.role === 'admin';
 
 async function saveToCloud() {
     if (!_CLOUD.token || !_CLOUD.gistId) { alert('Error: credenciales de nube no configuradas.'); return; }
-    const btn = document.getElementById('cloud-save-btn');
-    if (btn) { btn.textContent = '⏳ Guardando...'; btn.disabled = true; }
+    const btns = [document.getElementById('cloud-save-btn'), document.getElementById('cloud-save-btn-cocina')].filter(Boolean);
+    btns.forEach(b => { b.textContent = '⏳ Guardando...'; b.disabled = true; });
     try {
         const resp = await fetch(`https://api.github.com/gists/${_CLOUD.gistId}`, {
             method: 'PATCH',
@@ -32,15 +32,15 @@ async function saveToCloud() {
             })
         });
         if (resp.ok) {
-            if (btn) { btn.textContent = '✅ Guardado!'; btn.style.background = '#10b981'; }
-            setTimeout(() => { if (btn) { btn.textContent = '☁️ Guardar en la Nube'; btn.style.background = ''; btn.disabled = false; } }, 2500);
+            btns.forEach(b => { b.textContent = '✅ Guardado!'; b.style.background = '#10b981'; });
+            setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; b.disabled = false; }); }, 2500);
         } else {
             throw new Error(`HTTP ${resp.status}`);
         }
     } catch (e) {
         console.error('Cloud save failed:', e);
-        if (btn) { btn.textContent = '❌ Error'; btn.disabled = false; }
-        setTimeout(() => { if (btn) { btn.textContent = '☁️ Guardar en la Nube'; btn.style.background = ''; } }, 3000);
+        btns.forEach(b => { b.textContent = '❌ Error'; b.disabled = false; });
+        setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 3000);
     }
 }
 window.saveToCloud = saveToCloud;
@@ -67,10 +67,17 @@ function applyRoleRestrictions() {
     }
     const saveBtn = document.getElementById('cloud-save-btn');
     if (saveBtn) saveBtn.style.display = _isAdmin ? '' : 'none';
+    const saveBtnCocina = document.getElementById('cloud-save-btn-cocina');
+    if (saveBtnCocina) saveBtnCocina.style.display = _isAdmin ? '' : 'none';
     const roleEl = document.getElementById('role-indicator');
     if (roleEl) {
         roleEl.textContent = _isAdmin ? '👑 Admin' : '👀 Visor';
         roleEl.style.background = _isAdmin ? '#f59e0b' : '#64748b';
+    }
+    const roleElCocina = document.getElementById('role-indicator-cocina');
+    if (roleElCocina) {
+        roleElCocina.textContent = _isAdmin ? '👑 Admin' : '👀 Visor';
+        roleElCocina.style.background = _isAdmin ? '#f59e0b' : '#64748b';
     }
 }
 window.applyRoleRestrictions = applyRoleRestrictions;
