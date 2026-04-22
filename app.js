@@ -240,7 +240,6 @@ window.switchModule = function(moduleName) {
 function renderApp() {
     saveState();
     const standardDiets = [
-        { id: 'basal', name: 'General (Basal)', color: '#10b981' },
         { id: 'sin_gluten', name: 'Celíaca (Sin Gluten)', color: '#eab308' },
         { id: 'colaboradores', name: 'Colaboradores (Col)', color: '#64748b' },
         { id: 'vegetariana', name: 'Vegetariana (Veg)', color: '#84cc16' },
@@ -248,14 +247,15 @@ function renderApp() {
         { id: 'sic', name: 'Sindrome I. Corto (SIC)', color: '#06b6d4' },
         { id: 'diabetica', name: 'Diabetica (Dia)', color: '#ea580c' },
         { id: 'liquida', name: 'Líquida (Liq)', color: '#3b82f6' },
-        { id: 'triturada', name: 'Triturada (Tra)', color: '#d946ef' }
+        { id: 'triturada', name: 'Triturada (Tra)', color: '#d946ef' },
+        { id: 'enteral', name: 'Enteral', color: '#78716c' }
     ];
     
     if(!state.diets) { 
         state.diets = JSON.parse(JSON.stringify(standardDiets));
     } else {
-        // Eliminar solo las que quedaron realmente discontinuadas
-        const deprecated = ['proteccion_gastrica', 'proteccion_renal'];
+        // Eliminar dietas discontinuadas + la antigua 'basal' que ahora es 'default'
+        const deprecated = ['proteccion_gastrica', 'proteccion_renal', 'basal'];
         state.diets = state.diets.filter(d => !deprecated.includes(d.id));
         
         standardDiets.forEach(sd => {
@@ -1144,7 +1144,7 @@ function renderDishVariationTabs() {
     const container = document.getElementById('dish-variation-tabs');
     if(!container) return;
     
-    let html = `<button type="button" class="btn ${activeDishTab === 'default' ? 'primary' : 'secondary'}" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="switchVariationTab('default')">General</button>`;
+    let html = `<button type="button" class="btn ${activeDishTab === 'default' ? 'primary' : 'secondary'}" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="switchVariationTab('default')">General (Basal)</button>`;
     
     state.diets.forEach(diet => {
         const isSet = currentDishDraft[diet.id] && (currentDishDraft[diet.id].ingredients || currentDishDraft[diet.id].recipe);
@@ -1158,7 +1158,7 @@ function renderDishVariationTabs() {
     
     const label = document.getElementById('current-variation-label');
     if(label) {
-        label.textContent = activeDishTab === 'default' ? 'General' : state.diets.find(d => d.id === activeDishTab).name;
+        label.textContent = activeDishTab === 'default' ? 'General (Basal)' : state.diets.find(d => d.id === activeDishTab).name;
         label.style.color = activeDishTab === 'default' ? 'var(--accent-blue)' : state.diets.find(d => d.id === activeDishTab).color;
     }
 }
@@ -3025,4 +3025,238 @@ window.generateAIPreparation = async () => {
         textarea.style.borderColor = '';
         textarea.style.boxShadow = '';
     }, 2000);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI Macro Calculation — estimates kcal/carbs/protein/fat from ingredient list
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Nutritional database (per 100g) — common ingredients in Paraguayan geriatric cuisine
+const _NUTRI_DB = {
+    // Proteins
+    'pollo':        { kcal: 239, carbs: 0,    protein: 27,  fat: 14 },
+    'pechuga':      { kcal: 165, carbs: 0,    protein: 31,  fat: 3.6 },
+    'muslo':        { kcal: 209, carbs: 0,    protein: 26,  fat: 10.9 },
+    'carne':        { kcal: 250, carbs: 0,    protein: 26,  fat: 15 },
+    'carne vacuna': { kcal: 250, carbs: 0,    protein: 26,  fat: 15 },
+    'carne molida': { kcal: 332, carbs: 0,    protein: 14,  fat: 30 },
+    'carne picada': { kcal: 332, carbs: 0,    protein: 14,  fat: 30 },
+    'bife':         { kcal: 271, carbs: 0,    protein: 26,  fat: 18 },
+    'cerdo':        { kcal: 242, carbs: 0,    protein: 27,  fat: 14 },
+    'pescado':      { kcal: 206, carbs: 0,    protein: 22,  fat: 12 },
+    'surubí':       { kcal: 96,  carbs: 0,    protein: 20,  fat: 1.5 },
+    'tilapia':      { kcal: 96,  carbs: 0,    protein: 20,  fat: 1.7 },
+    'merluza':      { kcal: 90,  carbs: 0,    protein: 18,  fat: 1.3 },
+    'atún':         { kcal: 130, carbs: 0,    protein: 28,  fat: 1 },
+    'huevo':        { kcal: 155, carbs: 1.1,  protein: 13,  fat: 11 },
+    'huevos':       { kcal: 155, carbs: 1.1,  protein: 13,  fat: 11 },
+    'jamón':        { kcal: 145, carbs: 1.5,  protein: 21,  fat: 5.5 },
+    'salchicha':    { kcal: 301, carbs: 2,    protein: 12,  fat: 27 },
+
+    // Dairy
+    'leche':        { kcal: 61,  carbs: 4.8,  protein: 3.2, fat: 3.3 },
+    'queso':        { kcal: 402, carbs: 1.3,  protein: 25,  fat: 33 },
+    'queso paraguay': { kcal: 370, carbs: 1,  protein: 24,  fat: 30 },
+    'queso fresco': { kcal: 174, carbs: 2.7,  protein: 14,  fat: 12 },
+    'crema':        { kcal: 340, carbs: 2.8,  protein: 2,   fat: 36 },
+    'crema de leche': { kcal: 340, carbs: 2.8, protein: 2,  fat: 36 },
+    'yogur':        { kcal: 61,  carbs: 3.6,  protein: 3.5, fat: 3.3 },
+    'manteca':      { kcal: 717, carbs: 0.1,  protein: 0.9, fat: 81 },
+    'mantequilla':  { kcal: 717, carbs: 0.1,  protein: 0.9, fat: 81 },
+
+    // Starches & Grains
+    'arroz':        { kcal: 130, carbs: 28,   protein: 2.7, fat: 0.3 },
+    'fideo':        { kcal: 131, carbs: 25,   protein: 5,   fat: 1.1 },
+    'fideos':       { kcal: 131, carbs: 25,   protein: 5,   fat: 1.1 },
+    'pasta':        { kcal: 131, carbs: 25,   protein: 5,   fat: 1.1 },
+    'tallarín':     { kcal: 131, carbs: 25,   protein: 5,   fat: 1.1 },
+    'tallarines':   { kcal: 131, carbs: 25,   protein: 5,   fat: 1.1 },
+    'papa':         { kcal: 77,  carbs: 17,   protein: 2,   fat: 0.1 },
+    'papas':        { kcal: 77,  carbs: 17,   protein: 2,   fat: 0.1 },
+    'batata':       { kcal: 86,  carbs: 20,   protein: 1.6, fat: 0.1 },
+    'mandioca':     { kcal: 160, carbs: 38,   protein: 1.4, fat: 0.3 },
+    'yuca':         { kcal: 160, carbs: 38,   protein: 1.4, fat: 0.3 },
+    'pan':          { kcal: 265, carbs: 49,   protein: 9,   fat: 3.2 },
+    'pan rallado':  { kcal: 395, carbs: 72,   protein: 13,  fat: 5 },
+    'harina':       { kcal: 364, carbs: 76,   protein: 10,  fat: 1 },
+    'harina de maíz': { kcal: 370, carbs: 79, protein: 7,   fat: 3.9 },
+    'maíz':         { kcal: 86,  carbs: 19,   protein: 3.3, fat: 1.4 },
+    'choclo':       { kcal: 86,  carbs: 19,   protein: 3.3, fat: 1.4 },
+    'avena':        { kcal: 68,  carbs: 12,   protein: 2.4, fat: 1.4 },
+    'polenta':      { kcal: 370, carbs: 79,   protein: 7,   fat: 3.9 },
+    'ñoquis':       { kcal: 133, carbs: 20,   protein: 4.5, fat: 3.8 },
+    'gnocchi':      { kcal: 133, carbs: 20,   protein: 4.5, fat: 3.8 },
+
+    // Legumes
+    'poroto':       { kcal: 347, carbs: 63,   protein: 21,  fat: 1.2 },
+    'porotos':      { kcal: 347, carbs: 63,   protein: 21,  fat: 1.2 },
+    'lenteja':      { kcal: 116, carbs: 20,   protein: 9,   fat: 0.4 },
+    'lentejas':     { kcal: 116, carbs: 20,   protein: 9,   fat: 0.4 },
+    'garbanzo':     { kcal: 164, carbs: 27,   protein: 8.9, fat: 2.6 },
+    'garbanzos':    { kcal: 164, carbs: 27,   protein: 8.9, fat: 2.6 },
+    'soja':         { kcal: 446, carbs: 30,   protein: 36,  fat: 20 },
+
+    // Vegetables
+    'tomate':       { kcal: 18,  carbs: 3.9,  protein: 0.9, fat: 0.2 },
+    'cebolla':      { kcal: 40,  carbs: 9.3,  protein: 1.1, fat: 0.1 },
+    'ajo':          { kcal: 149, carbs: 33,   protein: 6.4, fat: 0.5 },
+    'zanahoria':    { kcal: 41,  carbs: 10,   protein: 0.9, fat: 0.2 },
+    'zapallo':      { kcal: 26,  carbs: 6.5,  protein: 1,   fat: 0.1 },
+    'calabaza':     { kcal: 26,  carbs: 6.5,  protein: 1,   fat: 0.1 },
+    'zapallito':    { kcal: 17,  carbs: 3.4,  protein: 1.2, fat: 0.2 },
+    'calabacín':    { kcal: 17,  carbs: 3.4,  protein: 1.2, fat: 0.2 },
+    'berenjena':    { kcal: 25,  carbs: 6,    protein: 1,   fat: 0.2 },
+    'pimiento':     { kcal: 20,  carbs: 4.6,  protein: 0.9, fat: 0.2 },
+    'morrón':       { kcal: 20,  carbs: 4.6,  protein: 0.9, fat: 0.2 },
+    'lechuga':      { kcal: 15,  carbs: 2.9,  protein: 1.4, fat: 0.2 },
+    'espinaca':     { kcal: 23,  carbs: 3.6,  protein: 2.9, fat: 0.4 },
+    'acelga':       { kcal: 19,  carbs: 3.7,  protein: 1.8, fat: 0.2 },
+    'chaucha':      { kcal: 31,  carbs: 7,    protein: 1.8, fat: 0.1 },
+    'remolacha':    { kcal: 43,  carbs: 10,   protein: 1.6, fat: 0.2 },
+    'repollo':      { kcal: 25,  carbs: 5.8,  protein: 1.3, fat: 0.1 },
+    'brócoli':      { kcal: 34,  carbs: 7,    protein: 2.8, fat: 0.4 },
+    'coliflor':     { kcal: 25,  carbs: 5,    protein: 1.9, fat: 0.3 },
+    'arvejas':      { kcal: 81,  carbs: 14,   protein: 5.4, fat: 0.4 },
+    'choclo':       { kcal: 86,  carbs: 19,   protein: 3.3, fat: 1.4 },
+
+    // Fruits
+    'banana':       { kcal: 89,  carbs: 23,   protein: 1.1, fat: 0.3 },
+    'manzana':      { kcal: 52,  carbs: 14,   protein: 0.3, fat: 0.2 },
+    'naranja':      { kcal: 47,  carbs: 12,   protein: 0.9, fat: 0.1 },
+    'durazno':      { kcal: 39,  carbs: 10,   protein: 0.9, fat: 0.3 },
+
+    // Oils & Fats
+    'aceite':       { kcal: 884, carbs: 0,    protein: 0,   fat: 100 },
+    'aceite de oliva': { kcal: 884, carbs: 0, protein: 0,   fat: 100 },
+    'aceite de girasol': { kcal: 884, carbs: 0, protein: 0, fat: 100 },
+    'margarina':    { kcal: 717, carbs: 0.9,  protein: 0.2, fat: 80 },
+
+    // Condiments & Others
+    'azúcar':       { kcal: 387, carbs: 100,  protein: 0,   fat: 0 },
+    'sal':          { kcal: 0,   carbs: 0,    protein: 0,   fat: 0 },
+    'pimienta':     { kcal: 251, carbs: 64,   protein: 10,  fat: 3.3 },
+    'caldo':        { kcal: 10,  carbs: 1,    protein: 0.5, fat: 0.3 },
+    'salsa de tomate': { kcal: 29, carbs: 6,  protein: 1.3, fat: 0.2 },
+    'salsa':        { kcal: 29,  carbs: 6,    protein: 1.3, fat: 0.2 },
+    'mermelada':    { kcal: 250, carbs: 65,   protein: 0.3, fat: 0.1 },
+    'dulce':        { kcal: 250, carbs: 65,   protein: 0.3, fat: 0.1 },
+    'miel':         { kcal: 304, carbs: 82,   protein: 0.3, fat: 0 },
+    'gelatina':     { kcal: 62,  carbs: 14,   protein: 1.2, fat: 0 },
+    'agua':         { kcal: 0,   carbs: 0,    protein: 0,   fat: 0 },
+};
+
+// Fuzzy matching: find the best match for an ingredient name in the DB
+function _findNutriMatch(name) {
+    const lower = name.toLowerCase().trim();
+    // Exact match first
+    if (_NUTRI_DB[lower]) return _NUTRI_DB[lower];
+    // Check if any DB key is contained in the name, or name contains a DB key
+    let bestMatch = null;
+    let bestLen = 0;
+    for (const key of Object.keys(_NUTRI_DB)) {
+        if (lower.includes(key) && key.length > bestLen) {
+            bestMatch = _NUTRI_DB[key];
+            bestLen = key.length;
+        }
+    }
+    return bestMatch;
+}
+
+// Convert ingredient amount to grams for estimation
+function _toGrams(amount, unit) {
+    const a = parseFloat(amount) || 0;
+    switch ((unit || 'g').toLowerCase()) {
+        case 'g': case 'gr': case 'grs': return a;
+        case 'kg': return a * 1000;
+        case 'ml': return a; // approximate 1ml = 1g for most liquids
+        case 'l': case 'lt': case 'lts': return a * 1000;
+        case 'u': case 'un': case 'unidad': case 'unidades':
+            return a * 60; // avg weight of 1 unit (egg ~60g, fruit ~120g, etc.)
+        case 'cda': case 'cucharada': return a * 15;
+        case 'cdita': case 'cucharadita': return a * 5;
+        case 'taza': return a * 240;
+        case 'pizca': return a * 0.5;
+        default: return a;
+    }
+}
+
+window.calcMacrosAI = async function() {
+    const btn = document.getElementById('ai-calc-macros-btn');
+    const textEl = btn.querySelector('.ai-calc-text');
+    const loadingEl = btn.querySelector('.ai-calc-loading');
+
+    // Gather current ingredients from the form
+    const rows = document.querySelectorAll('#ingredients-list .ingredient-row');
+    if (rows.length === 0) {
+        alert('Agrega ingredientes primero para calcular los macros.');
+        return;
+    }
+
+    // Show loading state
+    textEl.style.display = 'none';
+    loadingEl.style.display = 'inline-flex';
+    btn.disabled = true;
+
+    await new Promise(r => setTimeout(r, 600)); // Simulate AI processing
+
+    let totalKcal = 0, totalCarbs = 0, totalProtein = 0, totalFat = 0;
+    let matched = 0, unmatched = [];
+
+    rows.forEach(row => {
+        const nameEl = row.querySelector('.ing-name');
+        const amountEl = row.querySelector('.ing-amount');
+        const unitEl = row.querySelector('.ing-unit');
+        if (!nameEl || !nameEl.value.trim()) return;
+
+        const name = nameEl.value.trim();
+        const amount = amountEl ? amountEl.value : '100';
+        const unit = unitEl ? unitEl.value : 'g';
+        const grams = _toGrams(amount, unit);
+
+        const nutri = _findNutriMatch(name);
+        if (nutri) {
+            const factor = grams / 100;
+            totalKcal += nutri.kcal * factor;
+            totalCarbs += nutri.carbs * factor;
+            totalProtein += nutri.protein * factor;
+            totalFat += nutri.fat * factor;
+            matched++;
+        } else {
+            unmatched.push(name);
+        }
+    });
+
+    // Fill in the form fields
+    document.getElementById('dish-kcal').value = Math.round(totalKcal);
+    document.getElementById('dish-carbs').value = Math.round(totalCarbs * 10) / 10;
+    document.getElementById('dish-protein').value = Math.round(totalProtein * 10) / 10;
+    document.getElementById('dish-fat').value = Math.round(totalFat * 10) / 10;
+
+    // End loading
+    textEl.style.display = 'inline';
+    loadingEl.style.display = 'none';
+    btn.disabled = false;
+
+    // Flash green on the macro fields
+    ['dish-kcal', 'dish-carbs', 'dish-protein', 'dish-fat'].forEach(id => {
+        const el = document.getElementById(id);
+        el.style.borderColor = '#10b981';
+        el.style.boxShadow = '0 0 0 3px rgba(16,185,129,0.2)';
+        setTimeout(() => { el.style.borderColor = ''; el.style.boxShadow = ''; }, 2500);
+    });
+
+    // Show result feedback
+    let msg = `🧮 Macros calculados: ${matched} ingrediente(s) reconocido(s).`;
+    if (unmatched.length > 0) {
+        msg += `\n⚠️ No reconocidos (estimación parcial): ${unmatched.join(', ')}`;
+    }
+    // Use a brief toast
+    const toast = document.createElement('div');
+    toast.textContent = msg;
+    toast.style.cssText = `position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        background: ${unmatched.length > 0 ? '#f59e0b' : '#10b981'}; color: white; padding: 12px 24px;
+        border-radius: 12px; font-size: 0.9rem; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        white-space: pre-line; max-width: 90%;`;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
 };
