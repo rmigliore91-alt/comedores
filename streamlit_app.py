@@ -1,6 +1,6 @@
 """
 Gestión de Comedores — Residencia Geriátrica
-Main Streamlit application with authentication, admin panel, and component rendering.
+Main Streamlit application with authentication, admin panel, and cloud-persisted UI.
 """
 import streamlit as st
 import streamlit.components.v1 as components
@@ -18,36 +18,24 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── Premium Login CSS ───────────────────────────────────────────────────────
+# ─── Premium CSS ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
-
-/* Hide Streamlit chrome */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 .stDeployButton {display: none;}
 header[data-testid="stHeader"] {display: none;}
-
-/* Global font */
-html, body, [class*="st-"] {
-    font-family: 'Outfit', sans-serif !important;
-}
-
-/* When app is loaded, remove padding */
-.block-container {
-    padding-top: 1rem !important;
-    padding-bottom: 0 !important;
-}
+html, body, [class*="st-"] { font-family: 'Outfit', sans-serif !important; }
+.block-container { padding-top: 1rem !important; padding-bottom: 0 !important; max-width: 100% !important; }
+iframe { border: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ─── Data Store ───────────────────────────────────────────────────────────────
-# No cache_resource — DataStore is lightweight and must always read fresh secrets
 def get_store():
     return DataStore()
-
 
 store = get_store()
 
@@ -70,7 +58,7 @@ def _save_users(users: dict):
 
 def authenticate(username: str, password: str):
     """Return user dict if credentials valid, else None."""
-    store.invalidate_cache()  # ensure we read fresh data from Gist
+    store.invalidate_cache()
     users = _load_users()
     user = users.get(username.lower())
     if user and user["password_hash"] == hash_pw(password):
@@ -86,8 +74,6 @@ def is_admin() -> bool:
 # ─── Session State Init ──────────────────────────────────────────────────────
 if "user" not in st.session_state:
     st.session_state.user = None
-if "app_state" not in st.session_state:
-    st.session_state.app_state = None
 
 
 # ─── Login Page ───────────────────────────────────────────────────────────────
@@ -100,17 +86,13 @@ def show_login_page():
         border-radius: 20px; border: 1px solid #e2e8f0;
         box-shadow: 0 20px 60px rgba(0,0,0,0.08);
     }
-    .login-logo {
-        text-align: center; margin-bottom: 1.5rem;
-    }
+    .login-logo { text-align: center; margin-bottom: 1.5rem; }
     .login-logo .icon { font-size: 3rem; }
     .login-logo h2 {
         margin: 0.5rem 0 0 0; font-weight: 700; color: #1e293b;
         font-size: 1.4rem; letter-spacing: -0.02em;
     }
-    .login-logo p {
-        color: #64748b; font-size: 0.9rem; margin-top: 0.25rem;
-    }
+    .login-logo p { color: #64748b; font-size: 0.9rem; margin-top: 0.25rem; }
     </style>
     <div class="login-container">
         <div class="login-logo">
@@ -152,17 +134,10 @@ def show_admin_sidebar():
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
             store.log_activity(user["username"], "Cerró sesión")
             st.session_state.user = None
-            st.session_state.app_state = None
             store.invalidate_cache()
             st.rerun()
 
         st.markdown("---")
-
-        # Force cloud reload
-        if st.button("🔄 Recargar desde la Nube", use_container_width=True):
-            store.invalidate_cache()
-            st.session_state.app_state = None
-            st.rerun()
 
         if is_admin():
             st.markdown("### 👑 Panel de Administración")
@@ -197,6 +172,7 @@ def show_admin_sidebar():
 
             # ── User List ──
             with st.expander("👥 Usuarios Registrados"):
+                store.invalidate_cache()
                 users = _load_users()
                 for uname, udata in users.items():
                     col_a, col_b = st.columns([3, 1])
@@ -222,48 +198,47 @@ def show_admin_sidebar():
                     st.info("Sin actividad registrada.")
 
 
-# ─── Register the Custom Component ───────────────────────────────────────────
-_comedores_component = components.declare_component(
-    "comedores",
-    path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "components", "comedores"),
-)
-
-
-def comedores_component(state, role, username, key="comedores_main"):
-    """Render the comedores UI component and return updated state if user saves."""
-    return _comedores_component(
-        state=state,
-        role=role,
-        username=username,
-        key=key,
-        default=None,
-    )
-
-
-# ─── Main App ────────────────────────────────────────────────────────────────
+# ─── Render the App (inline HTML/CSS/JS) ─────────────────────────────────────
 def show_app():
-    # Load state from cloud if not cached
-    if st.session_state.app_state is None:
-        with st.spinner("Cargando datos desde la nube..."):
-            st.session_state.app_state = store.load_state()
-            if not st.session_state.app_state:
-                st.session_state.app_state = {}  # empty = component will use defaults
+    user = st.session_state.user
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Render the component
-    result = comedores_component(
-        state=st.session_state.app_state,
-        role=st.session_state.user["role"],
-        username=st.session_state.user["username"],
+    # Read source files
+    with open(os.path.join(base_dir, "index.html"), "r", encoding="utf-8") as f:
+        html_content = f.read()
+    with open(os.path.join(base_dir, "styles.css"), "r", encoding="utf-8") as f:
+        css_content = f.read()
+    with open(os.path.join(base_dir, "app.js"), "r", encoding="utf-8") as f:
+        js_content = f.read()
+
+    # Load cloud state
+    cloud_state = store.load_state()
+    if not cloud_state:
+        cloud_state = {}
+
+    # Inline CSS
+    html_content = html_content.replace(
+        '<link rel="stylesheet" href="styles.css?v=10">',
+        f"<style>\n{css_content}\n</style>"
     )
 
-    # If the component sent back updated state (user clicked Save)
-    if result is not None:
-        st.session_state.app_state = result
-        store.save_state(result)
-        store.log_activity(
-            st.session_state.user["username"],
-            "Guardó cambios en la nube",
-        )
+    # Inject cloud config + state BEFORE the app.js runs
+    injection_script = f"""<script>
+    window._CLOUD_STATE = {json.dumps(cloud_state, ensure_ascii=False)};
+    window._USER_ROLE = '{user["role"]}';
+    window._USERNAME = '{user["username"]}';
+    window._GITHUB_TOKEN = '{store.token}';
+    window._GIST_ID = '{store.gist_id}';
+    </script>"""
+
+    # Replace the app.js reference with injection + inlined JS
+    html_content = html_content.replace(
+        '<script src="app.js?v=35"></script>',
+        f"{injection_script}\n<script>\n{js_content}\n</script>"
+    )
+
+    # Render the full app
+    components.html(html_content, height=900, scrolling=True)
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────

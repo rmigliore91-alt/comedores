@@ -1,9 +1,79 @@
-console.log("Antigravity App Booting...");
+console.log("Comedores App Booting (Cloud Mode)...");
 window.onerror = function(msg, url, lineNo, columnNo, error) {
     console.error(msg, url, lineNo, columnNo, error);
-    alert("Error de aplicación: " + msg + "\nLínea: " + lineNo);
     return false;
 };
+
+// ═══════════════════════════════════════════════════════════════
+// CLOUD PERSISTENCE — Direct GitHub Gist API from the browser
+// ═══════════════════════════════════════════════════════════════
+const _CLOUD = {
+    token: (window._GITHUB_TOKEN || ''),
+    gistId: (window._GIST_ID || ''),
+    role: (window._USER_ROLE || 'viewer'),
+    username: (window._USERNAME || ''),
+};
+const _isAdmin = _CLOUD.role === 'admin';
+
+async function saveToCloud() {
+    if (!_CLOUD.token || !_CLOUD.gistId) { alert('Error: credenciales de nube no configuradas.'); return; }
+    const btn = document.getElementById('cloud-save-btn');
+    if (btn) { btn.textContent = '⏳ Guardando...'; btn.disabled = true; }
+    try {
+        const resp = await fetch(`https://api.github.com/gists/${_CLOUD.gistId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${_CLOUD.token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: { 'state.json': { content: JSON.stringify(state) } }
+            })
+        });
+        if (resp.ok) {
+            if (btn) { btn.textContent = '✅ Guardado!'; btn.style.background = '#10b981'; }
+            setTimeout(() => { if (btn) { btn.textContent = '☁️ Guardar en la Nube'; btn.style.background = ''; btn.disabled = false; } }, 2500);
+        } else {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+    } catch (e) {
+        console.error('Cloud save failed:', e);
+        if (btn) { btn.textContent = '❌ Error'; btn.disabled = false; }
+        setTimeout(() => { if (btn) { btn.textContent = '☁️ Guardar en la Nube'; btn.style.background = ''; } }, 3000);
+    }
+}
+window.saveToCloud = saveToCloud;
+
+// Role-based UI restrictions (called after every render)
+function applyRoleRestrictions() {
+    const selectors = [
+        '#add-resident-btn', '#add-table-btn', '#add-dr-btn',
+        '#edit-current-dr-btn', '.dr-item-actions', '.table-actions',
+        '#dish-form button[type="submit"]', '#delete-dish-btn',
+        '#ai-gen-prep-btn', '#merge-section', '.import-section',
+    ];
+    selectors.forEach(sel => {
+        document.querySelectorAll(sel).forEach(el => {
+            el.style.display = _isAdmin ? '' : 'none';
+        });
+    });
+    if (!_isAdmin) {
+        document.querySelectorAll('.resident').forEach(el => {
+            el.setAttribute('draggable', 'false');
+            el.style.cursor = 'default';
+        });
+        document.querySelectorAll('.resident .icon-btn.danger').forEach(el => el.style.display = 'none');
+    }
+    const saveBtn = document.getElementById('cloud-save-btn');
+    if (saveBtn) saveBtn.style.display = _isAdmin ? '' : 'none';
+    const roleEl = document.getElementById('role-indicator');
+    if (roleEl) {
+        roleEl.textContent = _isAdmin ? '👑 Admin' : '👀 Visor';
+        roleEl.style.background = _isAdmin ? '#f59e0b' : '#64748b';
+    }
+}
+window.applyRoleRestrictions = applyRoleRestrictions;
 
 const defaultState = {
     venues: [
@@ -27,10 +97,20 @@ const defaultState = {
     ]
 };
 
-let state = JSON.parse(localStorage.getItem('comedores_state')) || defaultState;
+// Load state: prefer cloud-injected state, then localStorage, then defaults
+let state;
+if (window._CLOUD_STATE && Object.keys(window._CLOUD_STATE).length > 0) {
+    state = JSON.parse(JSON.stringify(window._CLOUD_STATE));
+    console.log('State loaded from cloud.');
+} else {
+    try { state = JSON.parse(localStorage.getItem('comedores_state')); } catch(e) { state = null; }
+    if (!state) state = JSON.parse(JSON.stringify(defaultState));
+    console.log('State loaded from localStorage/defaults.');
+}
 
 (function restoreData() {
-    if (localStorage.getItem('restored_v1')) return;
+    // Skip if state already has data (from cloud)
+    if (window._CLOUD_STATE && Object.keys(window._CLOUD_STATE).length > 0) return;
     const domNames = [
         "Lucia Aguilera", "Maria Alcaraz", "Guillermo Alvarez", "Carmen Baez", "Agnes Beyersdorff",
         "Maria Bordon", "Maria Bozzano", "Lorna Brooking", "Edith Caballero", "Mario Cano",
@@ -89,9 +169,8 @@ let state = JSON.parse(localStorage.getItem('comedores_state')) || defaultState;
             });
         }
         
-        localStorage.setItem('comedores_state', JSON.stringify(state));
+        try { localStorage.setItem('comedores_state', JSON.stringify(state)); } catch(e) {}
     }
-    localStorage.setItem('restored_v1', '1');
 })();
 
 // Robust State Initialization & Repair
@@ -125,7 +204,7 @@ validateState();
 
 
 function saveState() {
-    localStorage.setItem('comedores_state', JSON.stringify(state));
+    try { localStorage.setItem('comedores_state', JSON.stringify(state)); } catch(e) {}
 }
 
 // DOM Nodes
@@ -211,6 +290,7 @@ function renderApp() {
     try { if (typeof renderEstimacionTable === 'function') renderEstimacionTable(); } catch(e) { console.error("renderEstimacionTable fail", e); }
     try { updateWorkspaceHeader(); } catch(e) { console.error("updateWorkspaceHeader fail", e); }
     try { updateDebugStatus(); } catch(e) { console.error("updateDebugStatus fail", e); }
+    try { applyRoleRestrictions(); } catch(e) { console.error("applyRoleRestrictions fail", e); }
 }
 
 function updateDebugStatus() {
