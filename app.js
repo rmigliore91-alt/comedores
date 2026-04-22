@@ -240,6 +240,7 @@ window.switchModule = function(moduleName) {
 function renderApp() {
     saveState();
     const standardDiets = [
+        { id: 'basal', name: 'General (Basal)', color: '#10b981' },
         { id: 'sin_gluten', name: 'Celíaca (Sin Gluten)', color: '#eab308' },
         { id: 'colaboradores', name: 'Colaboradores (Col)', color: '#64748b' },
         { id: 'vegetariana', name: 'Vegetariana (Veg)', color: '#84cc16' },
@@ -254,8 +255,8 @@ function renderApp() {
     if(!state.diets) { 
         state.diets = JSON.parse(JSON.stringify(standardDiets));
     } else {
-        // Eliminar dietas discontinuadas + la antigua 'basal' que ahora es 'default'
-        const deprecated = ['proteccion_gastrica', 'proteccion_renal', 'basal'];
+        // Eliminar dietas discontinuadas
+        const deprecated = ['proteccion_gastrica', 'proteccion_renal'];
         state.diets = state.diets.filter(d => !deprecated.includes(d.id));
         
         standardDiets.forEach(sd => {
