@@ -2954,11 +2954,13 @@ function buildPreparationText(dishName, ingredients, categories, dietId) {
 
 /**
  * Call Gemini API with Google Search grounding to get a real recipe from the internet.
- * Returns the generated text or null if it fails.
+ * Returns { text, error } object. Tries multiple models and handles rate limits.
  */
-async function callGeminiForRecipe(dishName, ingredients, dietId) {
-    const apiKey = window._GEMINI_API_KEY;
-    if (!apiKey) return null;
+async function callGeminiForRecipe(dishName, ingredients, dietId, statusCallback) {
+    // API key: prefer injected from Streamlit, fallback to hardcoded
+    const apiKey = (window._GEMINI_API_KEY && window._GEMINI_API_KEY.length > 5)
+        ? window._GEMINI_API_KEY
+        : 'AIzaSyBQGXKSfln0JZHg5ZAOV8TFOwE-QIwpxD4';
 
     // Build ingredient list for context
     const ingredientList = ingredients.length > 0
@@ -3027,43 +3029,60 @@ REGLAS:
 - Escribe en español
 - No uses markdown con ** ni ## — solo texto plano con emojis como encabezados`;
 
-    try {
-        const resp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+    // Try multiple models in order of preference
+    const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+
+    for (const model of models) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                if (statusCallback) statusCallback(`🔍 Buscando recetas de "${dishName}" con ${model}...`);
+
+                const requestBody = {
                     contents: [{ parts: [{ text: prompt }] }],
-                    tools: [{ google_search: {} }],
-                    generationConfig: {
-                        temperature: 0.7,
-                        maxOutputTokens: 2048
+                    generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+                };
+                // Google Search grounding only for 2.0 models
+                if (model.includes('2.0')) {
+                    requestBody.tools = [{ google_search: {} }];
+                }
+
+                const resp = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
+                );
+
+                if (resp.status === 429) {
+                    const errorData = await resp.json();
+                    const retryMatch = JSON.stringify(errorData).match(/retryDelay.*?(\d+)s/);
+                    const waitSec = retryMatch ? Math.min(parseInt(retryMatch[1]), 30) : 10;
+                    if (attempt === 0) {
+                        if (statusCallback) statusCallback(`⏳ Límite de ${model} alcanzado. Reintentando en ${waitSec}s...`);
+                        await new Promise(r => setTimeout(r, waitSec * 1000));
+                        continue;
                     }
-                })
+                    console.warn(`Model ${model} rate limited twice, trying next...`);
+                    break;
+                }
+
+                if (!resp.ok) {
+                    console.error(`Gemini ${model} error:`, resp.status, await resp.text());
+                    break;
+                }
+
+                const data = await resp.json();
+                const candidate = data.candidates?.[0];
+                if (!candidate || !candidate.content?.parts) { break; }
+
+                const text = candidate.content.parts.filter(p => p.text).map(p => p.text).join('\n');
+                if (text) return { text, error: null };
+                break;
+            } catch (e) {
+                console.error(`Gemini ${model} failed:`, e);
+                break;
             }
-        );
-
-        if (!resp.ok) {
-            console.error('Gemini API error:', resp.status, await resp.text());
-            return null;
         }
-
-        const data = await resp.json();
-        const candidate = data.candidates?.[0];
-        if (!candidate || !candidate.content?.parts) return null;
-
-        // Extract text from parts (skip function calls etc)
-        const text = candidate.content.parts
-            .filter(p => p.text)
-            .map(p => p.text)
-            .join('\n');
-
-        return text || null;
-    } catch (e) {
-        console.error('Gemini API call failed:', e);
-        return null;
     }
+    return { text: null, error: 'No se pudo conectar con ningún modelo de IA. Se usará plantilla local.' };
 }
 
 /**
@@ -3102,19 +3121,18 @@ window.generateAIPreparation = async () => {
     const { ingredients, categories } = analyzeCurrentIngredients();
     const dietId = activeDishTab === 'default' ? null : activeDishTab;
 
-    // Try Gemini API with Google Search first
+    // Try Gemini API with Google Search (always attempts — has hardcoded key fallback)
     let fullText = null;
-    if (window._GEMINI_API_KEY) {
-        textarea.value = '🔍 Buscando recetas reales de "' + dishName + '" en internet...';
-        fullText = await callGeminiForRecipe(dishName, ingredients, dietId);
-    }
+    let usedAI = false;
+    const statusCb = (msg) => { textarea.value = msg; };
 
-    // Fallback to template-based generation
-    if (!fullText) {
-        if (window._GEMINI_API_KEY) {
-            textarea.value = '⚠️ No se pudo conectar con la IA. Generando con plantilla local...';
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+    const result = await callGeminiForRecipe(dishName, ingredients, dietId, statusCb);
+    if (result.text) {
+        fullText = result.text;
+        usedAI = true;
+    } else {
+        textarea.value = result.error || '⚠️ Generando con plantilla local...';
+        await new Promise(resolve => setTimeout(resolve, 1500));
         fullText = buildPreparationText(dishName, ingredients, categories, dietId);
     }
 
@@ -3149,7 +3167,7 @@ window.generateAIPreparation = async () => {
 
     // Update info banner based on source
     const infoBanner = document.getElementById('ai-gen-info');
-    if (window._GEMINI_API_KEY && fullText !== buildPreparationText(dishName, ingredients, categories, dietId)) {
+    if (usedAI) {
         infoBanner.innerHTML = `
             <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
                 <ion-icon name="globe-outline" style="font-size:1rem;"></ion-icon>
@@ -3162,7 +3180,7 @@ window.generateAIPreparation = async () => {
                 <ion-icon name="information-circle-outline" style="font-size:1rem;"></ion-icon>
                 <strong>Preparación generada por plantilla local</strong>
             </div>
-            <span>Generada con plantillas. Para recetas específicas buscadas en internet, configura la API Key de Gemini.</span>`;
+            <span>No se pudo conectar con la IA. Se generó con plantillas locales. Puedes editarla libremente.</span>`;
     }
 
     textarea.rows = Math.max(6, Math.min(25, fullText.split('\n').length + 2));
