@@ -228,6 +228,40 @@ textarea.ai-typing { border-color: #7c3aed !important; box-shadow: 0 0 0 3px rgb
     body.print-comedor .table-container { page-break-inside: avoid; box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important; }
     body.print-comedor { font-size: 10px; }
 
+    /* Resident cards — thinner borders so diet colors are visible, not overwhelming */
+    body.print-comedor .resident {
+        border-left-width: 3px !important;
+        border-right-width: 1px !important;
+        border-top-width: 1px !important;
+        border-bottom-width: 1px !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        padding: 0.3rem 0.5rem !important;
+    }
+    body.print-comedor .resident[data-consistency="normal"] {
+        border-style: solid !important;
+        border-right-color: #cbd5e1 !important;
+        border-top-color: #cbd5e1 !important;
+        border-bottom-color: #cbd5e1 !important;
+    }
+    body.print-comedor .resident[data-consistency="triturado"] {
+        border-style: dashed !important;
+        border-left-style: dashed !important;
+        border-left-width: 3px !important;
+    }
+    body.print-comedor .resident[data-consistency="precortado"] {
+        border-style: dotted !important;
+        border-left-style: dotted !important;
+        border-left-width: 3px !important;
+    }
+    /* Ensure thickener/supplement/assistance markers print their background colors */
+    body.print-comedor .thickener-marker,
+    body.print-comedor .supplement-marker,
+    body.print-comedor .assistance-marker {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
     /* Legends area — always visible, compact horizontal layout */
     body.print-comedor .only-print {
         display: block !important;

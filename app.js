@@ -2443,7 +2443,7 @@ window.exportComedorPDF = () => {
     
     const usedDietIds = new Set(drResidents.map(r => r.diet));
     const usedConsistencies = new Set(drResidents.map(r => r.consistency));
-    const hasThickener = drResidents.some(r => r.thickener && r.thickener !== 'none');
+    const usedThickeners = new Set(drResidents.filter(r => r.thickener && r.thickener !== 'none').map(r => r.thickener));
     const hasSupplement = drResidents.some(r => r.supplement);
     const hasAssistance = drResidents.some(r => r.assistance);
     
@@ -2460,10 +2460,15 @@ window.exportComedorPDF = () => {
     if (usedConsistencies.has('triturado')) othersHtml += `<div class="legend-item" style="margin:0;"><span class="border-box cons-triturado"></span> Triturado</div>`;
     if (usedConsistencies.has('precortado')) othersHtml += `<div class="legend-item" style="margin:0;"><span class="border-box cons-precortado"></span> Precortado</div>`;
     
+    // Thickener types with their specific colors and ★ symbol (Unicode, not ion-icon)
+    const thickenerColorMap = { 'nectar': '#3b82f6', 'miel': '#eab308', 'pudding': '#a855f7' };
+    const thickenerNameMap = { 'nectar': 'Espesante Néctar', 'miel': 'Espesante Miel', 'pudding': 'Espesante Pudding' };
     let additionalsHtml = '';
-    if (hasThickener) additionalsHtml += `<div class="legend-item" style="margin:0;"><span class="thickener-marker" style="position:static; display:inline-flex; width:14px; height:14px;"><ion-icon name="star"></ion-icon></span> Espesante</div>`;
-    if (hasSupplement) additionalsHtml += `<div class="legend-item" style="margin:0;"><span class="supplement-marker" style="position:static; display:inline-flex; width:14px; height:14px;"><ion-icon name="medical-outline"></ion-icon></span> Suplemento</div>`;
-    if (hasAssistance) additionalsHtml += `<div class="legend-item" style="margin:0;"><span class="assistance-marker" style="position:static; display:inline-flex; width:14px; height:14px;"><ion-icon name="hand-right-outline"></ion-icon></span> Asistencia</div>`;
+    usedThickeners.forEach(tk => {
+        additionalsHtml += `<div class="legend-item" style="margin:0;"><span style="display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; border-radius:50%; background:${thickenerColorMap[tk]}; color:white; font-size:9px; flex-shrink:0;">★</span> ${thickenerNameMap[tk]}</div>`;
+    });
+    if (hasSupplement) additionalsHtml += `<div class="legend-item" style="margin:0;"><span style="display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; border-radius:50%; background:#10b981; color:white; font-size:9px; flex-shrink:0;">✚</span> Suplemento</div>`;
+    if (hasAssistance) additionalsHtml += `<div class="legend-item" style="margin:0;"><span style="display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; border-radius:50%; background:#ea580c; color:white; font-size:9px; flex-shrink:0;">✋</span> Asistencia</div>`;
     
     if (additionalsHtml !== '' && othersHtml !== '') {
         othersHtml += `<div style="width: 1px; height: 12px; background: #94a3b8; margin: 0 4px;"></div>` + additionalsHtml;
@@ -3030,19 +3035,21 @@ REGLAS:
 - No uses markdown con ** ni ## — solo texto plano con emojis como encabezados`;
 
     // Try multiple models in order of preference
-    const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+    // gemini-2.5-flash has higher free-tier rate limits than 2.0
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+    let lastErrorMsg = '';
 
     for (const model of models) {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                if (statusCallback) statusCallback(`🔍 Buscando recetas de "${dishName}" con ${model}...`);
+                if (statusCallback) statusCallback(`🔍 Buscando recetas de "${dishName}" con ${model}${attempt > 0 ? ` (intento ${attempt + 1})` : ''}...`);
 
                 const requestBody = {
                     contents: [{ parts: [{ text: prompt }] }],
                     generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
                 };
-                // Google Search grounding only for 2.0 models
-                if (model.includes('2.0')) {
+                // Google Search grounding for 2.0+ models (not 1.5)
+                if (!model.includes('1.5')) {
                     requestBody.tools = [{ google_search: {} }];
                 }
 
@@ -3053,36 +3060,88 @@ REGLAS:
 
                 if (resp.status === 429) {
                     const errorData = await resp.json();
-                    const retryMatch = JSON.stringify(errorData).match(/retryDelay.*?(\d+)s/);
-                    const waitSec = retryMatch ? Math.min(parseInt(retryMatch[1]), 30) : 10;
-                    if (attempt === 0) {
-                        if (statusCallback) statusCallback(`⏳ Límite de ${model} alcanzado. Reintentando en ${waitSec}s...`);
-                        await new Promise(r => setTimeout(r, waitSec * 1000));
+                    const errorStr = JSON.stringify(errorData);
+                    const retryMatch = errorStr.match(/retryDelay.*?(\d+)s/);
+                    // Exponential backoff: 5s, 15s, 30s
+                    const baseSec = retryMatch ? Math.min(parseInt(retryMatch[1]), 30) : [5, 15, 30][attempt];
+                    lastErrorMsg = `Límite alcanzado en ${model}`;
+
+                    // Check if it's a daily quota exhaustion (different from per-minute rate limit)
+                    if (errorStr.includes('RESOURCE_EXHAUSTED') && errorStr.includes('per day')) {
+                        console.warn(`Model ${model} daily quota exhausted, trying next model...`);
+                        if (statusCallback) statusCallback(`⚠️ Cuota diaria de ${model} agotada. Probando siguiente modelo...`);
+                        lastErrorMsg = `Cuota diaria agotada en ${model}. Tu API key tiene plan gratuito con límite diario.`;
+                        break; // Skip to next model, no point retrying
+                    }
+
+                    if (attempt < 2) {
+                        if (statusCallback) statusCallback(`⏳ Límite de ${model} alcanzado. Reintentando en ${baseSec}s... (intento ${attempt + 2}/3)`);
+                        await new Promise(r => setTimeout(r, baseSec * 1000));
                         continue;
                     }
-                    console.warn(`Model ${model} rate limited twice, trying next...`);
+                    console.warn(`Model ${model} rate limited 3 times, trying next...`);
+                    break;
+                }
+
+                if (resp.status === 403) {
+                    const errorData = await resp.json();
+                    lastErrorMsg = `API Key sin permisos para ${model}. Verificar que la key tenga la API "Generative Language" habilitada.`;
+                    console.error(`Gemini ${model} forbidden:`, errorData);
+                    break;
+                }
+
+                if (resp.status === 400) {
+                    const errorData = await resp.json();
+                    console.error(`Gemini ${model} bad request:`, errorData);
+                    // Model might not support google_search — retry without it
+                    if (requestBody.tools && JSON.stringify(errorData).includes('google_search')) {
+                        delete requestBody.tools;
+                        if (statusCallback) statusCallback(`🔄 Reintentando ${model} sin búsqueda web...`);
+                        const resp2 = await fetch(
+                            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+                            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
+                        );
+                        if (resp2.ok) {
+                            const data2 = await resp2.json();
+                            const candidate2 = data2.candidates?.[0];
+                            if (candidate2?.content?.parts) {
+                                const text2 = candidate2.content.parts.filter(p => p.text).map(p => p.text).join('\n');
+                                if (text2) return { text: text2, error: null };
+                            }
+                        }
+                    }
                     break;
                 }
 
                 if (!resp.ok) {
-                    console.error(`Gemini ${model} error:`, resp.status, await resp.text());
+                    const errText = await resp.text();
+                    console.error(`Gemini ${model} error:`, resp.status, errText);
+                    lastErrorMsg = `Error ${resp.status} en ${model}`;
                     break;
                 }
 
                 const data = await resp.json();
                 const candidate = data.candidates?.[0];
-                if (!candidate || !candidate.content?.parts) { break; }
+                if (!candidate || !candidate.content?.parts) {
+                    lastErrorMsg = `${model} no devolvió contenido`;
+                    break;
+                }
 
                 const text = candidate.content.parts.filter(p => p.text).map(p => p.text).join('\n');
                 if (text) return { text, error: null };
                 break;
             } catch (e) {
                 console.error(`Gemini ${model} failed:`, e);
+                lastErrorMsg = `Error de conexión con ${model}`;
                 break;
             }
         }
     }
-    return { text: null, error: 'No se pudo conectar con ningún modelo de IA. Se usará plantilla local.' };
+
+    const helpMsg = lastErrorMsg.includes('Cuota diaria')
+        ? `${lastErrorMsg}\n\n💡 Solución: Habilitar facturación en Google AI Studio (aistudio.google.com) para aumentar los límites de la API.`
+        : 'No se pudo conectar con ningún modelo de IA. Se usará plantilla local.';
+    return { text: null, error: helpMsg };
 }
 
 /**
