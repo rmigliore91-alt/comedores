@@ -10,15 +10,25 @@ window.onerror = function(msg, url, lineNo, columnNo, error) {
 const _CLOUD = {
     token: (window._GITHUB_TOKEN || ''),
     gistId: (window._GIST_ID || ''),
-    role: (window._USER_ROLE || 'viewer'),
-    username: (window._USERNAME || ''),
+    role: (window._USER_ROLE || 'admin'),
+    username: (window._USERNAME || 'local_admin'),
 };
 const _isAdmin = _CLOUD.role === 'admin';
 
+// ── Cloud sync state ────────────────────────────────────────────────────
+let _autoSaveTimer = null;
+let _isSavingToCloud = false;
+let _userHasEdited = false; // Only auto-save after a real user edit, not on initial page load
+
+// ── Manual "Guardar en la Nube" button (fully self-contained) ────────────
 async function saveToCloud() {
     if (!_CLOUD.token || !_CLOUD.gistId) { alert('Error: credenciales de nube no configuradas.'); return; }
+    // Cancel any pending auto-save — we'll save right now
+    clearTimeout(_autoSaveTimer);
+    
     const btns = [document.getElementById('cloud-save-btn'), document.getElementById('cloud-save-btn-cocina')].filter(Boolean);
-    btns.forEach(b => { b.textContent = '⏳ Guardando...'; b.disabled = true; });
+    btns.forEach(b => { b.textContent = '⏳ Guardando...'; b.disabled = true; b.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)'; });
+    
     try {
         const resp = await fetch(`https://api.github.com/gists/${_CLOUD.gistId}`, {
             method: 'PATCH',
@@ -32,18 +42,139 @@ async function saveToCloud() {
             })
         });
         if (resp.ok) {
-            btns.forEach(b => { b.textContent = '✅ Guardado!'; b.style.background = '#10b981'; });
-            setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; b.disabled = false; }); }, 2500);
+            btns.forEach(b => { b.textContent = '✅ Guardado!'; b.style.background = '#10b981'; b.disabled = false; });
+            setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 2500);
+        } else {
+            const errText = await resp.text().catch(() => '');
+            throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 100)}`);
+        }
+    } catch (e) {
+        console.error('Cloud save failed:', e);
+        btns.forEach(b => { b.textContent = '❌ Error al guardar'; b.disabled = false; b.style.background = '#ef4444'; });
+        setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 4000);
+    }
+}
+window.saveToCloud = saveToCloud;
+
+// ── Auto-save to cloud with debounce ────────────────────────────────────
+
+function _showSyncStatus(status) {
+    // Only show sync status for auto-saves (manual save has its own feedback)
+    const indicators = [
+        document.getElementById('cloud-save-btn'),
+        document.getElementById('cloud-save-btn-cocina')
+    ].filter(Boolean);
+    
+    if (status === 'saving') {
+        indicators.forEach(b => {
+            b.textContent = '⏳ Sincronizando...';
+            b.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
+            b.disabled = true;
+        });
+    } else if (status === 'saved') {
+        indicators.forEach(b => {
+            b.textContent = '✅ Sincronizado';
+            b.style.background = '#10b981';
+            b.disabled = false;
+        });
+        setTimeout(() => {
+            indicators.forEach(b => {
+                b.textContent = '☁️ Guardar en la Nube';
+                b.style.background = '';
+            });
+        }, 2500);
+    } else if (status === 'error') {
+        indicators.forEach(b => {
+            b.textContent = '⚠️ Error sync';
+            b.style.background = '#ef4444';
+            b.disabled = false;
+        });
+        setTimeout(() => {
+            indicators.forEach(b => {
+                b.textContent = '☁️ Guardar en la Nube';
+                b.style.background = '';
+            });
+        }, 4000);
+    } else if (status === 'pending') {
+        indicators.forEach(b => {
+            b.textContent = '🔄 Guardando pronto...';
+            b.style.background = 'linear-gradient(135deg, #6366f1, #8b5cf6)';
+        });
+    }
+}
+
+async function _autoSaveToCloud() {
+    if (!_CLOUD.token || !_CLOUD.gistId || !_isAdmin) return;
+    if (_isSavingToCloud) {
+        // Retry in 2 seconds if currently saving
+        _autoSaveTimer = setTimeout(() => _autoSaveToCloud(), 2000);
+        return;
+    }
+    
+    _isSavingToCloud = true;
+    _showSyncStatus('saving');
+    
+    try {
+        const resp = await fetch(`https://api.github.com/gists/${_CLOUD.gistId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${_CLOUD.token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: { 'state.json': { content: JSON.stringify(state) } }
+            })
+        });
+        if (resp.ok) {
+            _showSyncStatus('saved');
+            console.log('Auto-saved to cloud successfully.');
         } else {
             throw new Error(`HTTP ${resp.status}`);
         }
     } catch (e) {
-        console.error('Cloud save failed:', e);
-        btns.forEach(b => { b.textContent = '❌ Error'; b.disabled = false; });
-        setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 3000);
+        console.error('Auto-save to cloud failed:', e);
+        _showSyncStatus('error');
+    } finally {
+        _isSavingToCloud = false;
     }
 }
-window.saveToCloud = saveToCloud;
+
+function saveState() {
+    try { localStorage.setItem('comedores_state', JSON.stringify(state)); } catch(e) {}
+    
+    // Auto-save to cloud only after real user edits (skip initial page load renders)
+    if (_userHasEdited && _isAdmin && _CLOUD.token && _CLOUD.gistId) {
+        _showSyncStatus('pending');
+        clearTimeout(_autoSaveTimer);
+        _autoSaveTimer = setTimeout(() => _autoSaveToCloud(), 3000);
+    }
+}
+
+// Mark that user has made real edits (called once after initial render completes)
+function _enableAutoSync() {
+    _userHasEdited = true;
+    console.log('Auto-sync enabled — future changes will sync to cloud.');
+}
+
+// ── Flush pending auto-save on page close ────────────────────────────────
+window.addEventListener('beforeunload', () => {
+    if (_autoSaveTimer && _isAdmin && _CLOUD.token && _CLOUD.gistId) {
+        clearTimeout(_autoSaveTimer);
+        try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PATCH', `https://api.github.com/gists/${_CLOUD.gistId}`, false);
+            xhr.setRequestHeader('Authorization', `token ${_CLOUD.token}`);
+            xhr.setRequestHeader('Accept', 'application/vnd.github.v3+json');
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.send(JSON.stringify({
+                files: { 'state.json': { content: JSON.stringify(state) } }
+            }));
+        } catch(e) {
+            console.error('beforeunload save failed:', e);
+        }
+    }
+});
 
 // Role-based UI restrictions (called after every render)
 function applyRoleRestrictions() {
@@ -210,10 +341,6 @@ function validateState() {
 validateState();
 
 
-function saveState() {
-    try { localStorage.setItem('comedores_state', JSON.stringify(state)); } catch(e) {}
-}
-
 // DOM Nodes
 const diningRoom = document.getElementById('dining-room');
 const unassignedList = document.getElementById('unassigned-residents');
@@ -309,7 +436,7 @@ function updateDebugStatus() {
     if (debugPanel) {
         debugPanel.innerHTML = `
             <div style="font-size: 0.75rem; color: #64748b; padding: 10px; background: #f1f5f9; border-radius: 6px; margin-top: 20px; border: 1px solid #cbd5e1;">
-                <strong>Diagnóstico v33:</strong><br>
+                <strong>Diagnóstico v34-AUTOSYNC:</strong><br>
                 Mb: ${mbCount} | Dom: ${domCount} | Limbo: ${limboCount}<br>
                 <div style="display:flex; flex-direction:column; gap:5px; margin-top:10px;">
                     ${limboCount > 0 ? '<button class="btn primary" onclick="rescueLimbo()" style="font-size:0.6rem; padding:4px;">Rescatar Limbo</button>' : ''}
@@ -428,7 +555,7 @@ function renderDiningRooms() {
     // Version & Debug Tag in Sidebar
     const versionTag = `
         <div id="debug-status-panel"></div>
-        <div style="margin-top:auto; padding: 20px 10px; font-size: 0.7rem; color: #94a3b8; border-top: 1px dashed #e2e8f0; opacity: 0.5;">Version v33-FORCED</div>
+        <div style="margin-top:auto; padding: 20px 10px; font-size: 0.7rem; color: #94a3b8; border-top: 1px dashed #e2e8f0; opacity: 0.5;">Version v34-AUTOSYNC</div>
     `;
 
     if (drList) drList.insertAdjacentHTML('beforeend', versionTag);
@@ -1630,6 +1757,9 @@ document.addEventListener('DOMContentLoaded', () => {
         renderDishes();
     }
     createNewDish(); // Initialize form state
+    
+    // Enable auto-sync AFTER initial page setup is done (don't auto-save on page load)
+    setTimeout(() => _enableAutoSync(), 1000);
 });
 
 // -------------- NUTRITIONAL DATABASE (per 100g/unit) --------------

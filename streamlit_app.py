@@ -266,7 +266,7 @@ def show_app():
 
     # Replace the app.js reference with injection + inlined JS
     html_content = html_content.replace(
-        '<script src="app.js?v=35"></script>',
+        '<script src="app.js?v=36"></script>',
         f"{injection_script}\n<script>\n{js_content}\n</script>"
     )
 
