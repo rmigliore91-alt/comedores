@@ -45,13 +45,13 @@ async function saveToCloud() {
             btns.forEach(b => { b.textContent = '✅ Guardado!'; b.style.background = '#10b981'; b.disabled = false; });
             setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 2500);
         } else {
-            const errText = await resp.text().catch(() => '');
-            throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 100)}`);
+            throw new Error(`${resp.status}`);
         }
     } catch (e) {
         console.error('Cloud save failed:', e);
-        btns.forEach(b => { b.textContent = '❌ Error al guardar'; b.disabled = false; b.style.background = '#ef4444'; });
-        setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 4000);
+        const errMsg = e.message || 'Red';
+        btns.forEach(b => { b.textContent = `❌ Error (${errMsg})`; b.disabled = false; b.style.background = '#ef4444'; });
+        setTimeout(() => { btns.forEach(b => { b.textContent = '☁️ Guardar en la Nube'; b.style.background = ''; }); }, 6000);
     }
 }
 window.saveToCloud = saveToCloud;
@@ -142,13 +142,6 @@ async function _autoSaveToCloud() {
 
 function saveState() {
     try { localStorage.setItem('comedores_state', JSON.stringify(state)); } catch(e) {}
-    
-    // Auto-save to cloud only after real user edits (skip initial page load renders)
-    if (_userHasEdited && _isAdmin && _CLOUD.token && _CLOUD.gistId) {
-        _showSyncStatus('pending');
-        clearTimeout(_autoSaveTimer);
-        _autoSaveTimer = setTimeout(() => _autoSaveToCloud(), 3000);
-    }
 }
 
 // Mark that user has made real edits (called once after initial render completes)
