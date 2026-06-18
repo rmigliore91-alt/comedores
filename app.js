@@ -388,6 +388,9 @@ function renderApp() {
     if(!state.dishes) {
         state.dishes = [];
     }
+    if(!state.ingredientsCatalog) {
+        state.ingredientsCatalog = [];
+    }
     // Master Resident Lists removed to allow manual deletion and venue assignment without overriding.
 
     // Ensure venues exist
@@ -1096,13 +1099,23 @@ window.addEventListener('click', (event) => {
 
 window.switchKitchenTab = (tab) => {
     document.querySelectorAll('.k-tab').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.k-view').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.k-view').forEach(el => {
+        el.classList.remove('active');
+        el.style.display = 'none';
+    });
     
     document.querySelector(`.k-tab[onclick*="${tab}"]`).classList.add('active');
-    document.getElementById('k-view-' + tab).classList.add('active');
+    const view = document.getElementById('k-view-' + tab);
+    if (view) {
+        view.classList.add('active');
+        view.style.display = view.dataset.displayStyle || 'flex';
+    }
     
     if(tab === 'recetario') {
          if(!document.getElementById('edit-dish-id').value) createNewDish();
+    }
+    if(tab === 'ingredientes') {
+         renderIngredientsCatalog();
     }
 };
 
@@ -1212,7 +1225,7 @@ window.addIngredientRow = (nameStr = '', amountStr = '', unitStr = 'g') => {
 
     const html = `
         <div class="ing-row" style="display:flex; gap:5px; align-items:center;">
-             <input type="text" class="ing-name" placeholder="Ej. Merluza" style="flex:2; padding:0.5rem; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9rem;" value="${nameStr}">
+             <input type="text" class="ing-name" list="ingredients-datalist" placeholder="Ej. Merluza" style="flex:2; padding:0.5rem; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9rem;" value="${nameStr}" onchange="onIngredientSelected(this)">
              <input type="number" class="ing-amount" placeholder="Cant." style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9rem;" value="${amountStr}">
              <input type="text" class="ing-unit" placeholder="Unid." style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; font-size:0.9rem;" value="${unitStr}">
              ${multDisplay}
@@ -2146,13 +2159,18 @@ function renderShoppingList(list, proteinTotal, count) {
     const sortedNames = Object.keys(list).sort();
     sortedNames.forEach(name => {
         const item = list[name];
-        // Categorization logic
-        const n = name.toLowerCase();
+        // Categorization: try catalog first, then fallback keyword matching
         let cat = 'Almacén';
-        if (n.includes('carne') || n.includes('peceto') || n.includes('bola') || n.includes('molida')) cat = 'Cárnicos';
-        else if (n.includes('pollo') || n.includes('ave') || n.includes('suprema')) cat = 'Aves';
-        else if (n.includes('papa') || n.includes('tomate') || n.includes('cebolla') || n.includes('zanahoria') || n.includes('acelga')) cat = 'Verduras';
-        else if (n.includes('leche') || n.includes('queso') || n.includes('yogur')) cat = 'Lácteos';
+        const catalogItem = (state.ingredientsCatalog || []).find(ci => ci.name.toLowerCase() === name.toLowerCase());
+        if (catalogItem && catalogItem.category) {
+            cat = catalogItem.category.replace('/Otros', '').replace('/Legumbres', '').replace('/Grasas', '');
+        } else {
+            const n = name.toLowerCase();
+            if (n.includes('carne') || n.includes('peceto') || n.includes('bola') || n.includes('molida')) cat = 'Cárnicos';
+            else if (n.includes('pollo') || n.includes('ave') || n.includes('suprema')) cat = 'Aves';
+            else if (n.includes('papa') || n.includes('tomate') || n.includes('cebolla') || n.includes('zanahoria') || n.includes('acelga')) cat = 'Verduras';
+            else if (n.includes('leche') || n.includes('queso') || n.includes('yogur')) cat = 'Lácteos';
+        }
 
         rows += `
             <tr>
@@ -3609,3 +3627,326 @@ window.calcMacrosAI = async function() {
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 4000);
 };
+
+// ═══════════════════════════════════════════════════════════════
+// INGREDIENTS CATALOG MODULE
+// ═══════════════════════════════════════════════════════════════
+
+const INGREDIENT_CATEGORIES = [
+    { id: 'Cárnicos', emoji: '🥩', color: '#fce4ec' },
+    { id: 'Aves', emoji: '🍗', color: '#fff3e0' },
+    { id: 'Pescados', emoji: '🐟', color: '#e3f2fd' },
+    { id: 'Lácteos', emoji: '🥛', color: '#fce4ec' },
+    { id: 'Verduras', emoji: '🥬', color: '#e8f5e9' },
+    { id: 'Frutas', emoji: '🍎', color: '#fff8e1' },
+    { id: 'Cereales/Legumbres', emoji: '🌾', color: '#efebe9' },
+    { id: 'Aceites/Grasas', emoji: '🫒', color: '#fff9c4' },
+    { id: 'Condimentos', emoji: '🧂', color: '#f3e5f5' },
+    { id: 'Bebidas', emoji: '🥤', color: '#e0f7fa' },
+    { id: 'Almacén/Otros', emoji: '📦', color: '#eceff1' },
+];
+
+function getCategoryInfo(catId) {
+    return INGREDIENT_CATEGORIES.find(c => c.id === catId) || { id: catId, emoji: '📦', color: '#eceff1' };
+}
+
+// ── Seed catalog from legacy nutritionalDB if catalog is empty ──
+(function seedCatalogIfEmpty() {
+    if (state.ingredientsCatalog && state.ingredientsCatalog.length > 0) return;
+    const seedData = [
+        { name: 'Pollo', category: 'Aves', unit: 'g', macros: { kcal: 165, carbs: 0, protein: 31, fat: 4 } },
+        { name: 'Carne', category: 'Cárnicos', unit: 'g', macros: { kcal: 250, carbs: 0, protein: 26, fat: 15 } },
+        { name: 'Pescado', category: 'Pescados', unit: 'g', macros: { kcal: 120, carbs: 0, protein: 22, fat: 3 } },
+        { name: 'Peceto', category: 'Cárnicos', unit: 'g', macros: { kcal: 200, carbs: 0, protein: 28, fat: 8 } },
+        { name: 'Merluza', category: 'Pescados', unit: 'g', macros: { kcal: 90, carbs: 0, protein: 18, fat: 2 } },
+        { name: 'Arroz', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 360, carbs: 78, protein: 7, fat: 1 } },
+        { name: 'Fideo', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 350, carbs: 72, protein: 12, fat: 2 } },
+        { name: 'Spaghetti', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 350, carbs: 72, protein: 12, fat: 2 } },
+        { name: 'Tallarín', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 350, carbs: 72, protein: 12, fat: 2 } },
+        { name: 'Maíz', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 360, carbs: 77, protein: 8, fat: 4 } },
+        { name: 'Harina', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 360, carbs: 76, protein: 10, fat: 1 } },
+        { name: 'Papa', category: 'Verduras', unit: 'g', macros: { kcal: 77, carbs: 17, protein: 2, fat: 0 } },
+        { name: 'Batata', category: 'Verduras', unit: 'g', macros: { kcal: 86, carbs: 20, protein: 1.6, fat: 0 } },
+        { name: 'Zapallo', category: 'Verduras', unit: 'g', macros: { kcal: 26, carbs: 6, protein: 1, fat: 0.1 } },
+        { name: 'Huevo', category: 'Almacén/Otros', unit: 'un', macros: { kcal: 155, carbs: 1.1, protein: 13, fat: 11 } },
+        { name: 'Queso', category: 'Lácteos', unit: 'g', macros: { kcal: 350, carbs: 3, protein: 25, fat: 26 } },
+        { name: 'Leche', category: 'Lácteos', unit: 'ml', macros: { kcal: 42, carbs: 5, protein: 3.4, fat: 1 } },
+        { name: 'Aceite', category: 'Aceites/Grasas', unit: 'ml', macros: { kcal: 884, carbs: 0, protein: 0, fat: 100 } },
+        { name: 'Crema', category: 'Lácteos', unit: 'ml', macros: { kcal: 340, carbs: 3, protein: 2, fat: 35 } },
+        { name: 'Pan', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 265, carbs: 49, protein: 9, fat: 3 } },
+        { name: 'Galleta', category: 'Cereales/Legumbres', unit: 'g', macros: { kcal: 380, carbs: 70, protein: 10, fat: 6 } },
+        { name: 'Fruta', category: 'Frutas', unit: 'g', macros: { kcal: 50, carbs: 12, protein: 0.5, fat: 0 } },
+        { name: 'Verdura', category: 'Verduras', unit: 'g', macros: { kcal: 25, carbs: 5, protein: 1, fat: 0 } },
+        { name: 'Ensalada', category: 'Verduras', unit: 'g', macros: { kcal: 30, carbs: 6, protein: 1, fat: 0 } },
+    ];
+    state.ingredientsCatalog = seedData.map((s, i) => ({
+        id: 'ing_seed_' + i,
+        name: s.name,
+        commercialName: '',
+        category: s.category,
+        unit: s.unit,
+        packageQty: 0,
+        packageUnit: s.unit,
+        pricePerPackage: 0,
+        macros: s.macros,
+        micros: { fiber: 0, sodium: 0, calcium: 0, iron: 0, vitA: 0, vitC: 0, vitD: 0, vitB12: 0 },
+    }));
+    saveState();
+})();
+
+// ── Render Ingredients Catalog ──
+window.renderIngredientsCatalog = () => {
+    const container = document.getElementById('ing-cards-container');
+    if (!container) return;
+    
+    const searchTerm = (document.getElementById('ing-search')?.value || '').toLowerCase();
+    const catFilter = document.getElementById('ing-cat-filter')?.value || '';
+    
+    let items = (state.ingredientsCatalog || []).filter(ing => {
+        if (searchTerm && !ing.name.toLowerCase().includes(searchTerm) && !(ing.commercialName || '').toLowerCase().includes(searchTerm)) return false;
+        if (catFilter && ing.category !== catFilter) return false;
+        return true;
+    });
+    
+    // Group by category
+    const groups = {};
+    INGREDIENT_CATEGORIES.forEach(c => { groups[c.id] = []; });
+    items.forEach(ing => {
+        const cat = ing.category || 'Almacén/Otros';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(ing);
+    });
+    
+    let html = '';
+    Object.entries(groups).forEach(([catId, catItems]) => {
+        if (catItems.length === 0) return;
+        const catInfo = getCategoryInfo(catId);
+        html += `<div class="ing-category-group">`;
+        html += `<div class="ing-category-label">${catInfo.emoji} ${catId} (${catItems.length})</div>`;
+        catItems.sort((a, b) => a.name.localeCompare(b.name)).forEach(ing => {
+            const editIngId = document.getElementById('edit-ing-id')?.value;
+            const isActive = editIngId === ing.id;
+            const priceDisplay = ing.pricePerPackage ? `₲ ${Number(ing.pricePerPackage).toLocaleString()}` : '';
+            const detailParts = [];
+            if (ing.commercialName) detailParts.push(ing.commercialName);
+            if (ing.packageQty) detailParts.push(`${ing.packageQty}${ing.packageUnit}`);
+            const detail = detailParts.join(' · ') || `${ing.unit}`;
+            html += `
+                <div class="ing-card ${isActive ? 'active' : ''}" onclick="editIngredient('${ing.id}')">
+                    <div class="ing-card-icon" style="background: ${catInfo.color};">${catInfo.emoji}</div>
+                    <div class="ing-card-info">
+                        <div class="ing-card-name">${ing.name}</div>
+                        <div class="ing-card-detail">${detail}</div>
+                    </div>
+                    ${priceDisplay ? `<div class="ing-card-price">${priceDisplay}</div>` : ''}
+                </div>
+            `;
+        });
+        html += `</div>`;
+    });
+    
+    if (!html) {
+        html = '<div style="text-align:center; color:#94a3b8; padding:40px;">No se encontraron ingredientes.</div>';
+    }
+    container.innerHTML = html;
+};
+
+// ── Create / Edit / Delete Ingredient ──
+window.createNewIngredient = () => {
+    document.getElementById('edit-ing-id').value = '';
+    document.getElementById('ing-form-title').textContent = 'Nuevo Ingrediente';
+    document.getElementById('ing-form').reset();
+    document.getElementById('ing-category').value = 'Almacén/Otros';
+    document.getElementById('ing-unit').value = 'g';
+    document.getElementById('ing-pkg-unit').value = 'g';
+    document.getElementById('delete-ing-btn').style.display = 'none';
+    renderIngredientsCatalog();
+};
+
+window.editIngredient = (id) => {
+    const ing = (state.ingredientsCatalog || []).find(i => i.id === id);
+    if (!ing) return;
+    
+    document.getElementById('edit-ing-id').value = ing.id;
+    document.getElementById('ing-form-title').textContent = 'Editar: ' + ing.name;
+    document.getElementById('ing-name').value = ing.name || '';
+    document.getElementById('ing-commercial-name').value = ing.commercialName || '';
+    document.getElementById('ing-category').value = ing.category || 'Almacén/Otros';
+    document.getElementById('ing-unit').value = ing.unit || 'g';
+    document.getElementById('ing-pkg-qty').value = ing.packageQty || '';
+    document.getElementById('ing-pkg-unit').value = ing.packageUnit || 'g';
+    document.getElementById('ing-price').value = ing.pricePerPackage || '';
+    
+    // Macros
+    document.getElementById('ing-macro-kcal').value = ing.macros?.kcal || '';
+    document.getElementById('ing-macro-carbs').value = ing.macros?.carbs || '';
+    document.getElementById('ing-macro-protein').value = ing.macros?.protein || '';
+    document.getElementById('ing-macro-fat').value = ing.macros?.fat || '';
+    
+    // Micros
+    document.getElementById('ing-micro-fiber').value = ing.micros?.fiber || '';
+    document.getElementById('ing-micro-sodium').value = ing.micros?.sodium || '';
+    document.getElementById('ing-micro-calcium').value = ing.micros?.calcium || '';
+    document.getElementById('ing-micro-iron').value = ing.micros?.iron || '';
+    document.getElementById('ing-micro-vita').value = ing.micros?.vitA || '';
+    document.getElementById('ing-micro-vitc').value = ing.micros?.vitC || '';
+    document.getElementById('ing-micro-vitd').value = ing.micros?.vitD || '';
+    document.getElementById('ing-micro-vitb12').value = ing.micros?.vitB12 || '';
+    
+    document.getElementById('delete-ing-btn').style.display = 'block';
+    renderIngredientsCatalog();
+};
+
+window.deleteCurrentIngredient = () => {
+    const id = document.getElementById('edit-ing-id').value;
+    if (!id) return;
+    const ing = (state.ingredientsCatalog || []).find(i => i.id === id);
+    if (!ing) return;
+    if (!confirm(`¿Eliminar "${ing.name}" del catálogo?`)) return;
+    
+    state.ingredientsCatalog = state.ingredientsCatalog.filter(i => i.id !== id);
+    saveState();
+    _scheduleAutoSave();
+    createNewIngredient();
+};
+
+// ── Ingredient Form Submit ──
+(function initIngForm() {
+    const form = document.getElementById('ing-form');
+    if (!form) return;
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const id = document.getElementById('edit-ing-id').value;
+        const data = {
+            id: id || ('ing_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+            name: document.getElementById('ing-name').value.trim(),
+            commercialName: document.getElementById('ing-commercial-name').value.trim(),
+            category: document.getElementById('ing-category').value,
+            unit: document.getElementById('ing-unit').value,
+            packageQty: parseFloat(document.getElementById('ing-pkg-qty').value) || 0,
+            packageUnit: document.getElementById('ing-pkg-unit').value || 'g',
+            pricePerPackage: parseFloat(document.getElementById('ing-price').value) || 0,
+            macros: {
+                kcal: parseFloat(document.getElementById('ing-macro-kcal').value) || 0,
+                carbs: parseFloat(document.getElementById('ing-macro-carbs').value) || 0,
+                protein: parseFloat(document.getElementById('ing-macro-protein').value) || 0,
+                fat: parseFloat(document.getElementById('ing-macro-fat').value) || 0,
+            },
+            micros: {
+                fiber: parseFloat(document.getElementById('ing-micro-fiber').value) || 0,
+                sodium: parseFloat(document.getElementById('ing-micro-sodium').value) || 0,
+                calcium: parseFloat(document.getElementById('ing-micro-calcium').value) || 0,
+                iron: parseFloat(document.getElementById('ing-micro-iron').value) || 0,
+                vitA: parseFloat(document.getElementById('ing-micro-vita').value) || 0,
+                vitC: parseFloat(document.getElementById('ing-micro-vitc').value) || 0,
+                vitD: parseFloat(document.getElementById('ing-micro-vitd').value) || 0,
+                vitB12: parseFloat(document.getElementById('ing-micro-vitb12').value) || 0,
+            },
+        };
+        
+        if (!data.name) { alert('Ingresa un nombre para el ingrediente.'); return; }
+        
+        if (!state.ingredientsCatalog) state.ingredientsCatalog = [];
+        
+        if (id) {
+            const idx = state.ingredientsCatalog.findIndex(i => i.id === id);
+            if (idx >= 0) state.ingredientsCatalog[idx] = data;
+        } else {
+            state.ingredientsCatalog.push(data);
+        }
+        
+        saveState();
+        _scheduleAutoSave();
+        updateIngredientsDatalist();
+        
+        // Flash feedback
+        const btn = form.querySelector('button[type=submit]');
+        btn.textContent = '✅ Guardado!';
+        btn.style.background = '#10b981';
+        setTimeout(() => { btn.textContent = 'Guardar Ingrediente'; btn.style.background = ''; }, 1500);
+        
+        // Continue editing the just-saved ingredient
+        document.getElementById('edit-ing-id').value = data.id;
+        document.getElementById('ing-form-title').textContent = 'Editar: ' + data.name;
+        document.getElementById('delete-ing-btn').style.display = 'block';
+        renderIngredientsCatalog();
+    });
+})();
+
+// ── Update the global datalist for recipe ingredient selection ──
+function updateIngredientsDatalist() {
+    const dl = document.getElementById('ingredients-datalist');
+    if (!dl) return;
+    const items = (state.ingredientsCatalog || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    dl.innerHTML = items.map(i => {
+        const catInfo = getCategoryInfo(i.category);
+        return `<option value="${i.name}" label="${catInfo.emoji} ${i.name} (${i.unit})">`;
+    }).join('');
+}
+
+// ── When user selects an ingredient from datalist, auto-fill unit ──
+window.onIngredientSelected = (inputEl) => {
+    const name = inputEl.value.trim();
+    const catalogItem = (state.ingredientsCatalog || []).find(i => i.name.toLowerCase() === name.toLowerCase());
+    if (catalogItem) {
+        const row = inputEl.closest('.ing-row');
+        if (row) {
+            const unitInput = row.querySelector('.ing-unit');
+            if (unitInput && !unitInput.value) {
+                unitInput.value = catalogItem.unit || 'g';
+            }
+        }
+    }
+};
+
+// ── Enhanced macros calculation using catalog ──
+const _originalCalculateIngredientsMacros = typeof calculateIngredientsMacros === 'function' ? calculateIngredientsMacros : null;
+
+function calculateIngredientsMacrosEnhanced(ingredients) {
+    const totals = { kcal: 0, carbs: 0, protein: 0, fat: 0 };
+    if (!Array.isArray(ingredients)) return totals;
+
+    ingredients.forEach(ing => {
+        const name = ing.name.toLowerCase();
+        let found = false;
+        
+        // Try catalog first
+        const catalogItem = (state.ingredientsCatalog || []).find(ci => ci.name.toLowerCase() === name);
+        if (catalogItem && catalogItem.macros) {
+            const amount = parseFloat(ing.amount) || 0;
+            const factor = amount / 100;
+            totals.kcal += Math.round(catalogItem.macros.kcal * factor);
+            totals.carbs += Math.round(catalogItem.macros.carbs * factor * 10) / 10;
+            totals.protein += Math.round(catalogItem.macros.protein * factor * 10) / 10;
+            totals.fat += Math.round(catalogItem.macros.fat * factor * 10) / 10;
+            found = true;
+        }
+        
+        // Fallback to legacy nutritionalDB
+        if (!found) {
+            let findKey = Object.keys(nutritionalDB).find(k => name.includes(k));
+            if (findKey) {
+                const data = nutritionalDB[findKey];
+                const amount = parseFloat(ing.amount) || 0;
+                const factor = amount / 100;
+                totals.kcal += Math.round(data.kcal * factor);
+                totals.carbs += Math.round(data.carbs * factor * 10) / 10;
+                totals.protein += Math.round(data.protein * factor * 10) / 10;
+                totals.fat += Math.round(data.fat * factor * 10) / 10;
+            }
+        }
+    });
+    return totals;
+}
+
+// ── Auto-save scheduler helper ──
+function _scheduleAutoSave() {
+    if (typeof _autoSaveToCloud === 'function' && _isAdmin && _CLOUD.token && _CLOUD.gistId) {
+        clearTimeout(_autoSaveTimer);
+        _autoSaveTimer = setTimeout(() => _autoSaveToCloud(), 3000);
+    }
+}
+
+// ── Initialize datalist on load ──
+updateIngredientsDatalist();

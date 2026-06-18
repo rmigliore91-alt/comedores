@@ -142,6 +142,7 @@
                  </div>
                   <div class="kitchen-tabs">
                       <button class="k-tab active" onclick="switchKitchenTab('recetario')">Recetario (Base de Platos)</button>
+                      <button class="k-tab" onclick="switchKitchenTab('ingredientes')">🥕 Ingredientes</button>
                       <button class="k-tab" onclick="switchKitchenTab('estimacion')">Estimación de Comensales</button>
                       <button class="k-tab" onclick="switchKitchenTab('planificador')">Planificador Semanal</button>
                       <button class="k-tab" onclick="switchKitchenTab('compras')">Lista de Compras</button>
@@ -276,6 +277,165 @@
                                     <button type="button" class="btn secondary full-width" onclick="executeMerge()" style="border-color: #8b5cf6; color: #8b5cf6;">
                                          <ion-icon name="git-merge-outline"></ion-icon> Fusionar Variantes
                                     </button>
+                               </div>
+                          </form>
+                     </div>
+                </div>
+
+                <!-- INGREDIENTES CATALOG VIEW -->
+                <div id="k-view-ingredientes" class="k-view ing-catalog-container" style="display:none;">
+                     
+                     <!-- Left side: Ingredient List -->
+                     <div class="ing-catalog-list">
+                          <div class="ing-catalog-header">
+                               <h3 style="margin: 0; color: #1e293b;">Catálogo de Ingredientes</h3>
+                               <button class="btn secondary" onclick="createNewIngredient()">+ Nuevo Ingrediente</button>
+                          </div>
+                          <div class="ing-catalog-filters">
+                               <input type="text" id="ing-search" placeholder="🔍 Buscar ingrediente..." oninput="renderIngredientsCatalog()">
+                               <select id="ing-cat-filter" onchange="renderIngredientsCatalog()">
+                                    <option value="">Todas las categorías</option>
+                                    <option value="Cárnicos">🥩 Cárnicos</option>
+                                    <option value="Aves">🍗 Aves</option>
+                                    <option value="Pescados">🐟 Pescados</option>
+                                    <option value="Lácteos">🥛 Lácteos</option>
+                                    <option value="Verduras">🥬 Verduras</option>
+                                    <option value="Frutas">🍎 Frutas</option>
+                                    <option value="Cereales/Legumbres">🌾 Cereales/Legumbres</option>
+                                    <option value="Aceites/Grasas">🫒 Aceites/Grasas</option>
+                                    <option value="Condimentos">🧂 Condimentos</option>
+                                    <option value="Bebidas">🥤 Bebidas</option>
+                                    <option value="Almacén/Otros">📦 Almacén/Otros</option>
+                               </select>
+                          </div>
+                          <div class="ing-cards-container" id="ing-cards-container">
+                               <!-- Ingredient cards rendered by JS -->
+                          </div>
+                     </div>
+                     
+                     <!-- Right side: Ingredient Form -->
+                     <div class="ing-form-panel">
+                          <h3 id="ing-form-title">Nuevo Ingrediente</h3>
+                          <form id="ing-form">
+                               <input type="hidden" id="edit-ing-id" value="">
+                               <div class="form-group">
+                                    <label>Nombre Genérico:</label>
+                                    <input type="text" id="ing-name" required placeholder="Ej: Merluza">
+                               </div>
+                               <div class="form-group">
+                                    <label>Nombre Comercial:</label>
+                                    <input type="text" id="ing-commercial-name" placeholder="Ej: Merluza fileteada Granja del Sol">
+                               </div>
+                               <div class="ing-form-grid">
+                                    <div class="form-group">
+                                         <label>Categoría:</label>
+                                         <select id="ing-category" required>
+                                              <option value="Cárnicos">🥩 Cárnicos</option>
+                                              <option value="Aves">🍗 Aves</option>
+                                              <option value="Pescados">🐟 Pescados</option>
+                                              <option value="Lácteos">🥛 Lácteos</option>
+                                              <option value="Verduras">🥬 Verduras</option>
+                                              <option value="Frutas">🍎 Frutas</option>
+                                              <option value="Cereales/Legumbres">🌾 Cereales/Legumbres</option>
+                                              <option value="Aceites/Grasas">🫒 Aceites/Grasas</option>
+                                              <option value="Condimentos">🧂 Condimentos</option>
+                                              <option value="Bebidas">🥤 Bebidas</option>
+                                              <option value="Almacén/Otros" selected>📦 Almacén/Otros</option>
+                                         </select>
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Unidad Base:</label>
+                                         <select id="ing-unit">
+                                              <option value="g">g (gramos)</option>
+                                              <option value="kg">kg (kilogramos)</option>
+                                              <option value="ml">ml (mililitros)</option>
+                                              <option value="l">l (litros)</option>
+                                              <option value="un">un (unidades)</option>
+                                         </select>
+                                    </div>
+                               </div>
+
+                               <div class="ing-form-section-title">💰 Precio y Empaque</div>
+                               <div class="ing-form-grid-3">
+                                    <div class="form-group">
+                                         <label>Cant. por Paquete:</label>
+                                         <input type="number" id="ing-pkg-qty" step="0.01" placeholder="500">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Unidad Paquete:</label>
+                                         <select id="ing-pkg-unit">
+                                              <option value="g">g</option>
+                                              <option value="kg">kg</option>
+                                              <option value="ml">ml</option>
+                                              <option value="l">l</option>
+                                              <option value="un">un</option>
+                                         </select>
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Precio (₲):</label>
+                                         <input type="number" id="ing-price" step="1" placeholder="3500">
+                                    </div>
+                               </div>
+
+                               <div class="ing-form-section-title">🍎 Macronutrientes (por 100g/ml)</div>
+                               <div class="ing-form-grid">
+                                    <div class="form-group">
+                                         <label>Calorías (Kcal):</label>
+                                         <input type="number" id="ing-macro-kcal" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Carbohidratos (g):</label>
+                                         <input type="number" id="ing-macro-carbs" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Proteínas (g):</label>
+                                         <input type="number" id="ing-macro-protein" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Grasas (g):</label>
+                                         <input type="number" id="ing-macro-fat" step="0.1">
+                                    </div>
+                               </div>
+
+                               <div class="ing-form-section-title">💊 Micronutrientes (por 100g/ml)</div>
+                               <div class="ing-form-grid">
+                                    <div class="form-group">
+                                         <label>Fibra (g):</label>
+                                         <input type="number" id="ing-micro-fiber" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Sodio (mg):</label>
+                                         <input type="number" id="ing-micro-sodium" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Calcio (mg):</label>
+                                         <input type="number" id="ing-micro-calcium" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Hierro (mg):</label>
+                                         <input type="number" id="ing-micro-iron" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Vitamina A (µg):</label>
+                                         <input type="number" id="ing-micro-vita" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Vitamina C (mg):</label>
+                                         <input type="number" id="ing-micro-vitc" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Vitamina D (µg):</label>
+                                         <input type="number" id="ing-micro-vitd" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                         <label>Vitamina B12 (µg):</label>
+                                         <input type="number" id="ing-micro-vitb12" step="0.1">
+                                    </div>
+                               </div>
+
+                               <div class="ing-form-actions">
+                                    <button type="submit" class="btn primary full-width">Guardar Ingrediente</button>
+                                    <button type="button" class="btn danger" id="delete-ing-btn" style="display:none;" onclick="deleteCurrentIngredient()">Eliminar</button>
                                </div>
                           </form>
                      </div>
@@ -548,6 +708,11 @@
         </div>
 
     </div>
+
+    <!-- Global datalist for ingredient catalog -->
+    <datalist id="ingredients-datalist">
+        <!-- Populated dynamically by JS -->
+    </datalist>
 
     <script src="app.js?v=36"></script>
 </body>
